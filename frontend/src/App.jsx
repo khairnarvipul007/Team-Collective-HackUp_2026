@@ -1,13 +1,14 @@
 /**
- * OmniGuard XAI — Full Frontend v3
+ * OmniGuard XAI — Full Frontend v3 (ML Backend Integrated)
  * Union Bank of India · Banking Fraud Intelligence Platform
- * All PS1 (Idea 2.0) + PS3 (Hackup) requirements covered.
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const API = "/api";
-const DEMO = false; // set false when backend is running
+// 🚨 CHANGED TO FALSE: App is now in REAL LIVE WORKING MODE!
+// It will pull data exclusively from your Python backend datasets.
+const DEMO = false; 
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CONSTANTS
@@ -40,7 +41,7 @@ const ALERT_POOL = [
   {message:"TXN-88045 geo anomaly: Mumbai → Dubai, 2,400km",           severity:"med", module:"transaction"},
   {message:"EMP-2011 off-hours login 3:22 AM (baseline 9 AM)",         severity:"med", module:"user"},
   {message:"EMP-2002 accessed 8 restricted modules (baseline 3)",      severity:"high",module:"user"},
-  {message:"TXN-88312 velocity: 5 txns in 90 seconds, same IP",       severity:"high",module:"transaction"},
+  {message:"TXN-88312 velocity: 5 txns in 90 seconds, same IP",        severity:"high",module:"transaction"},
   {message:"TXN-88401 Shell Company Ltd ₹15,00,000 flagged",           severity:"high",module:"transaction"},
   {message:"EMP-2015 unauthorised account modification in Loan Origination", severity:"high",module:"user"},
   {message:"EMP-2009 accessed Customer Database at 4:12 AM",           severity:"high",module:"user"},
@@ -52,6 +53,7 @@ const AUTONOMY_LABELS = ["Observe","Suggest","Act (Low)","Full Auto"];
 const ACTION_ICONS = {
   "Alert dispatched":"📢","Account frozen":"🔒","SMS OTP triggered":"📱",
   "Case escalated":"⚠️","Report filed":"📋","Session suspended":"🚫","Account unlocked":"🔓",
+  "BLOCK": "🚫", "STEP-UP MFA": "📱", "ALLOW": "✅", "AUTO-APPROVED": "✅", "FLAGGED (GEN-AI)": "⚠️", "FROZEN (ESCALATED)": "🔒", "AUTO-BLOCKED (LOCKED)": "🚫"
 };
 
 function rnd(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
@@ -386,13 +388,16 @@ function ShapMatrix({factors,itemId,riskScore}){
       ← click a flagged row to view XAI feature attribution
     </div>
   );
-  const mx=Math.max(...factors.map(f=>f.value),1);
+  // Support both Object format (from new backend) and Array format (from old mock)
+  const factorsArray = Array.isArray(factors) ? factors : Object.entries(factors).map(([k,v])=>({label: v.label, value: v.contribution||v.value, direction: v.direction}));
+  const mx=Math.max(...factorsArray.map(f=>f.value),1);
+  
   return(
     <div>
       <div style={{fontSize:9,color:"#555",fontFamily:"monospace",marginBottom:10}}>
         {itemId} · Risk Score: {riskScore}%
       </div>
-      {factors.map((f,i)=>(
+      {factorsArray.map((f,i)=>(
         <div key={i} style={{display:"flex",alignItems:"center",gap:7,marginBottom:8}}>
           <span style={{fontSize:9,color:"#666",fontFamily:"monospace",width:158,textAlign:"right",flexShrink:0,lineHeight:1.3}}>{f.label}</span>
           <div style={{flex:1,background:"#1a1a2e",borderRadius:3,height:13,overflow:"hidden"}}>
@@ -426,7 +431,7 @@ function BaselineCard({user}){
   const mAcc=user.modules_accessed||3;
   const rows=[
     {label:"Login Time",    baseline:`${normHr}:00–${normHr+2}:00 AM`,  actual:user.last_login||"",              anomaly:user.off_hours_access||user.offHoursAccess},
-    {label:"Data Export",   baseline:`~${normDv} MB/day`,                actual:`${dv} MB`,                       anomaly:dv>normDv*4},
+    {label:"Data Export",   baseline:`~${normDv} MB/day`,                actual:`${dv} MB`,                        anomaly:dv>normDv*4},
     {label:"Modules Used",  baseline:`${mNorm} systems`,                  actual:`${mAcc} systems`,                anomaly:mAcc>mNorm+2},
     {label:"Acct. Modify",  baseline:"None expected",                     actual:user.account_modification?"DETECTED ⚠️":"None",anomaly:user.account_modification},
     {label:"Privilege",     baseline:"Standard",                          actual:user.privilege_escalation?"ESCALATED ⚠️":"Standard",anomaly:user.privilege_escalation},
@@ -487,7 +492,7 @@ function CaseDetail({selected,isT,accent,onClose,onBlock,onEscalate,onClear}){
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:7}}>
         {/* Common fields */}
-        {[{k:"ID",v:selected.id},{k:"Branch",v:selected.branch}].map(r=>(
+        {[{k:"ID",v:selected.id},{k:"Branch",v:selected.branch||"N/A"}].map(r=>(
           <div key={r.k} style={{display:"flex",justifyContent:"space-between"}}>
             <span style={{fontSize:10,color:"#555",fontFamily:"monospace"}}>{r.k}</span>
             <span style={{fontSize:10,color:"#ccc",fontFamily:"monospace"}}>{r.v}</span>
@@ -496,7 +501,7 @@ function CaseDetail({selected,isT,accent,onClose,onBlock,onEscalate,onClear}){
         {/* Transaction-specific */}
         {isT&&[
           {k:"PAYEE",   v:selected.merchant},
-          {k:"AMOUNT",  v:`₹${selected.amount?.toLocaleString("en-IN")} (avg ₹${selected.avg_amount?.toLocaleString("en-IN")})`, c:selected.amount>500000?"#ff3366":"#ccc"},
+          {k:"AMOUNT",  v:`₹${selected.amount?.toLocaleString("en-IN")} ${selected.avg_amount?`(avg ₹${selected.avg_amount?.toLocaleString("en-IN")})`:''}`, c:selected.amount>500000?"#ff3366":"#ccc"},
           {k:"ACCOUNT", v:selected.account},
           {k:"CITY",    v:selected.city},
           {k:"HOUR",    v:`${selected.hour}:00`,c:(selected.hour<6||selected.hour>22)?"#ffaa00":"#ccc"},
@@ -590,7 +595,7 @@ function FedLearning({data}){
     <div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         {[{l:"Total Weights",v:`${(data.total_weights_mb||0).toLocaleString()} MB`,c:"#00d4ff"},
-          {l:"Active Sync",  v:`${data.active_sync} nodes`,c:"#f59e0b"}].map(s=>(
+          {l:"Active Sync",  v:`${data.active_sync||0} nodes`,c:"#f59e0b"}].map(s=>(
           <div key={s.l} style={{flex:1,background:"#0f0f1a",borderRadius:6,padding:"7px 10px"}}>
             <div style={{fontSize:8,color:"#444",fontFamily:"monospace",letterSpacing:1}}>{s.l}</div>
             <div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:"monospace",lineHeight:1.2}}>{s.v}</div>
@@ -625,7 +630,7 @@ function FedLearning({data}){
 // ═══════════════════════════════════════════════════════════════════════════
 //  AGENTIC CONSOLE
 // ═══════════════════════════════════════════════════════════════════════════
-function AgenticConsole({intents,reasoning,onApprove,onReject,autonomy,setAutonomy}){
+function AgenticConsole({intents=[],reasoning=[],onApprove,onReject,autonomy,setAutonomy}){
   const pending=intents.filter(i=>i.status==="pending");
   return(
     <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
@@ -706,7 +711,7 @@ function AgenticConsole({intents,reasoning,onApprove,onReject,autonomy,setAutono
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  AUDIT LOG — PS1 & PS3 (immutable ledger)
+//  AUDIT LOG — PS1 & PS3 (immutable ledger) + 🚨 AUTO/MANUAL FIX
 // ═══════════════════════════════════════════════════════════════════════════
 function AuditLog({data,onUndo}){
   if(!data) return null;
@@ -720,7 +725,7 @@ function AuditLog({data,onUndo}){
         <span style={{fontSize:8,background:"#a855f714",color:"#a855f7",border:"1px solid #a855f730",padding:"2px 8px",borderRadius:5,fontFamily:"monospace"}}>Immutable Ledger</span>
       </div>
       <div style={{display:"flex",gap:7,marginBottom:9}}>
-        {[{l:"Total",v:data.total,c:"#fff"},{l:"Automated",v:data.automated,c:"#a855f7"},{l:"Reverted",v:data.reverted,c:"#f59e0b"}].map(s=>(
+        {[{l:"Total",v:data.total,c:"#fff"},{l:"Automated",v:data.automated,c:"#a855f7"},{l:"Reverted",v:data.reverted||0,c:"#f59e0b"}].map(s=>(
           <div key={s.l} style={{flex:1,background:"#0f0f1a",borderRadius:5,padding:"5px 8px",textAlign:"center"}}>
             <div style={{fontSize:8,color:"#333",fontFamily:"monospace"}}>{s.l}</div>
             <div style={{fontSize:16,fontWeight:800,color:s.c,fontFamily:"monospace"}}>{s.v}</div>
@@ -732,10 +737,20 @@ function AuditLog({data,onUndo}){
           <div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",
             padding:"5px 0",borderBottom:"1px solid #0d0d22"}}>
             <div style={{display:"flex",gap:6,alignItems:"center"}}>
-              <span style={{fontSize:12}}>{ACTION_ICONS[a.action]||"📋"}</span>
+              <span style={{fontSize:12}}>{ACTION_ICONS[a.action?.split(" ")[0]]||"📋"}</span>
               <div>
-                <div style={{fontSize:10,color:"#ccc"}}>{a.action}</div>
-                <div style={{fontSize:8,color:"#444",fontFamily:"monospace"}}>{a.txn_id} · {a.method}</div>
+                <div style={{fontSize:10,color:"#ccc",marginBottom:2}}>{a.action}</div>
+                {/* 🚨 FIX: ADDED AUTOMATED VS MANUAL VISUAL BADGES */}
+                <div style={{fontSize:8,color:"#444",fontFamily:"monospace",display:"flex",alignItems:"center",gap:4}}>
+                  <span>{a.txn_id}</span>
+                  <span style={{
+                    background: a.automated ? "#a855f722" : "#00d4ff22",
+                    color: a.automated ? "#a855f7" : "#00d4ff",
+                    padding: "1px 4px", borderRadius: 3, fontSize: 7
+                  }}>
+                    {a.automated ? "🤖 AUTO" : "👤 MANUAL"}
+                  </span>
+                </div>
               </div>
             </div>
             <div style={{textAlign:"right",flexShrink:0}}>
@@ -799,65 +814,147 @@ export default function App(){
   const [autonomy,setAutonomy]     = useState(1);
   const [clock,setClock]           = useState(()=>new Date().toUTCString().slice(17,25)+" UTC");
 
+  // 🚨 ML INTEGRATION STATE VARIABLES
+  const [mlResult, setMlResult] = useState(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  
+  // 🚨 NEW UI STATES FOR MODAL & BELL
+  const [showAttackModal, setShowAttackModal] = useState(false);
+  const [showNotifPanel, setShowNotifPanel] = useState(false);
+
   const isT=module==="transaction";
   const accent=isT?"#00d4ff":"#a855f7";
 
   const flaggedTxns =txns.filter(t=>t.flagged);
   const flaggedUsers=users.filter(u=>u.flagged);
 
-  // ── 1. Fetch Initial Data from Python Backend ───────────────────────────
-  useEffect(() => {
-    if (DEMO) return; // Skip if in demo mode
-    
-    const fetchAllData = async () => {
-      try {
-        const [txnsRes, usersRes, graphRes, metricsRes, fedRes, reasoningRes, intentsRes, auditRes] = await Promise.all([
-          fetch(API + '/transactions').then(r=>r.json()),
-          fetch(API + '/users').then(r=>r.json()),
-          fetch(API + '/graph').then(r=>r.json()),
-          fetch(API + '/metrics').then(r=>r.json()),
-          fetch(API + '/fed-learning').then(r=>r.json()),
-          fetch(API + '/reasoning').then(r=>r.json()),
-          fetch(API + '/intents').then(r=>r.json()),
-          fetch(API + '/audit').then(r=>r.json())
-        ]);
-        
-        // Push the backend data into React state
-        setTxns(txnsRes.transactions);
-        setUsers(usersRes.users);
-        setGraph(graphRes);
-        setMetrics(metricsRes);
-        setFed(fedRes);
-        setReasoning(reasoningRes.steps);
-        setIntents(intentsRes.intents);
-        setAudit(auditRes);
-      } catch (error) {
-        console.error("Backend connection failed! Is main.py running?", error);
-      }
-    };
-    
-    fetchAllData();
+  // ── 0. Fetch Real Data from Python Backend ───────────────────────────
+  const fetchAllData = useCallback(async () => {
+    if(DEMO) return; 
+    try {
+      const [txnsRes, usersRes, graphRes, metricsRes, fedRes, reasoningRes, intentsRes, auditRes] = await Promise.all([
+        fetch(API + '/transactions').then(r=>r.json()), fetch(API + '/users').then(r=>r.json()),
+        fetch(API + '/graph').then(r=>r.json()), fetch(API + '/metrics').then(r=>r.json()),
+        fetch(API + '/fed-learning').then(r=>r.json()), fetch(API + '/reasoning').then(r=>r.json()),
+        fetch(API + '/intents').then(r=>r.json()), fetch(API + '/audit').then(r=>r.json())
+      ]);
+      setTxns(txnsRes.transactions||[]); setUsers(usersRes.users||[]); setGraph(graphRes||{nodes:[],edges:[]});
+      setMetrics(metricsRes); setFed(fedRes); setReasoning(reasoningRes.steps||[]);
+      setIntents(intentsRes.intents||[]); setAudit(auditRes||{total:0,automated:0,actions:[]});
+    } catch (error) { console.error("Backend offline."); }
   }, []);
+
+  useEffect(() => { fetchAllData(); }, [fetchAllData]);
+
+  // ── 1. Attack Simulation Logic ───────────────────────────────
+  const attackVectors = {
+    offshore: {
+      title: "Massive Offshore Transfer", desc: "Account Takeover pattern. High amount to unknown foreign entity at 3 AM.",
+      payload: { amount: 2750000, hour: 3, latency: 245, distance_km: 4200, velocity: 2, is_new_beneficiary: 1, merchant: "Offshore Shell Corp" }
+    },
+    velocity: {
+      title: "Velocity Card Testing", desc: "Small amounts triggered rapidly from a new IP address.",
+      payload: { amount: 450, hour: 14, latency: 45, distance_km: 15, velocity: 35, is_new_beneficiary: 0, merchant: "Online Payment Gateway" }
+    },
+    geo: {
+      title: "Zero-Day Geo Anomaly", desc: "Medium transfer from an impossibly far location with high latency proxy.",
+      payload: { amount: 85000, hour: 10, latency: 310, distance_km: 8500, velocity: 1, is_new_beneficiary: 1, merchant: "Unknown Foreign Entity" }
+    }
+  };
+
+  const executeAttack = async (type) => {
+    setShowAttackModal(false);
+    setIsSimulating(true);
+    const payload = attackVectors[type].payload;
+    payload.account_id = `UBI-${Math.floor(Math.random() * 90000000) + 10000000}`;
+    payload.branch = "Mumbai Main";
+
+    try {
+      const response = await fetch("/api/simulate", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = await response.json();
+
+      setMlResult(data);
+
+      // 🚨 Inject into main table locally for instant visual feedback
+      const newTableRow = {
+        id:       data.transaction_id,
+        merchant: data.merchant || payload.merchant,
+        account:  data.account_id || payload.account_id,
+        amount:   data.amount || payload.amount,
+        city:     payload.distance_km > 1000 ? "Dubai (Proxy)" : "Mumbai", // Fix geo display
+        hour:     data.hour || payload.hour,
+        risk:     data.risk_score,
+        flagged:  data.is_fraud,
+        latency:  data.processing_ms,
+        type:     data.action_taken, // Show blocked status
+        patterns: [attackVectors[type].title, "ML Caught"],
+        xai:      data.xai_factors 
+      };
+      setTxns(prev => [newTableRow, ...prev]);
+
+      // 🚨 Trigger complete UI sync from Backend to update Graph and Tables instantly
+      await fetchAllData();
+
+      // Format as a live alert for the bell/feed
+      const newAlert = {
+        id:       data.transaction_id,
+        message:  `🚨 ATTACK DETECTED — ${data.transaction_id} | Risk: ${data.risk_score}/100 | Action: ${data.action_taken}`,
+        severity: data.risk_score >= 70 ? "high" : "med",
+        module:   "transaction",
+        time:     new Date().toLocaleTimeString(),
+        xai:      data.xai_factors,
+      };
+      setAlerts(prev => [newAlert, ...prev].slice(0, 14));
+      setAlertPulse(true); setTimeout(()=>setAlertPulse(false),600);
+
+      // 🚨 Inject directly into Audit Log locally with `automated: true`
+      if (data.action_taken !== "ALLOW") {
+        setAudit(prev => ({
+          ...prev,
+          total:     prev.total + 1,
+          automated: prev.automated + 1,
+          actions: [{
+            id:        `ACT-${Date.now()}`,
+            action:    `${data.action_taken} — ${data.transaction_id}`,
+            txn_id:    data.transaction_id,
+            method:    "ML Ensemble",
+            automated: true, // This triggers the new 🤖 AUTO badge
+            time_ago:  "0s ago",
+            reverted:  false,
+          }, ...prev.actions],
+        }));
+      }
+    } catch (err) {
+      console.error("[OmniGuard] Simulation failed:", err);
+      alert("⚠️ Backend offline — Make sure Python is running on port 8000!");
+    } finally {
+      setIsSimulating(false);
+    }
+  };
 
   // ── 2. Live alerts polling every 4.5s ───────────────────────────────────
   useEffect(()=>{
     const push = async () => {
       if (DEMO) {
-        // Mock fallback
         _alertIdx++;
         const a=ALERT_POOL[_alertIdx%ALERT_POOL.length];
         const alert={...a,id:`ALT-${_alertIdx}`,time:new Date().toTimeString().slice(0,8)};
         setAlerts(prev=>[alert,...prev].slice(0,14));
+        setAlertPulse(true); setTimeout(()=>setAlertPulse(false),600);
       } else {
-        // Fetch live alert from FastAPI
         try {
           const res = await fetch(API + '/alerts');
           const data = await res.json();
-          setAlerts(prev=>[data.alert, ...prev].slice(0,14));
+          if(data.alert) {
+            setAlerts(prev=>[data.alert, ...prev].slice(0,14));
+            setAlertPulse(true); setTimeout(()=>setAlertPulse(false),600);
+          }
         } catch(e) { console.error(e); }
       }
-      setAlertPulse(true);
-      setTimeout(()=>setAlertPulse(false),600);
     };
     
     push();
@@ -865,26 +962,27 @@ export default function App(){
     return()=>clearInterval(iv);
   },[]);
 
-  // ── Clock ───────────────────────────────────────────────────────────────
+  // ── 3. Clock ───────────────────────────────────────────────────────────────
   useEffect(()=>{
     const iv=setInterval(()=>setClock(new Date().toUTCString().slice(17,25)+" UTC"),1000);
     return()=>clearInterval(iv);
   },[]);
 
-  // ── Audit helper ─────────────────────────────────────────────────────────
+  // ── 4. Audit helper ─────────────────────────────────────────────────────────
   const addAuditAction=(action,id)=>{
-    setAudit(p=>({...p,total:p.total+1,automated:p.automated+1,
+    setAudit(p=>({...p,total:p.total+1,
+      // Manual actions don't increment `automated` count
       actions:[{id:`ACT-${Date.now()}`,action,txn_id:id,method:"Manual",automated:false,time_ago:"0s ago",reverted:false},...p.actions]}));
   };
 
-  // ── Intent handlers ──────────────────────────────────────────────────────
+  // ── 5. Intent handlers ──────────────────────────────────────────────────────
   const handleApprove=id=>{
     setIntents(p=>p.map(i=>i.id===id?{...i,status:"approved"}:i));
-    addAuditAction("Case escalated",id);
+    addAuditAction("Action Approved",id);
   };
   const handleReject=id=>setIntents(p=>p.map(i=>i.id===id?{...i,status:"rejected"}:i));
 
-  // ── Row action handlers ──────────────────────────────────────────────────
+  // ── 6. Row action handlers ──────────────────────────────────────────────────
   const handleBlock=item=>{
     if(isT) setTxns(p=>p.map(t=>t.id===item.id?{...t,type:"BLOCKED"}:t));
     else    setUsers(p=>p.map(u=>u.id===item.id?{...u,anomalies:[...(u.anomalies||[]),"Session Blocked"]}:u));
@@ -903,7 +1001,7 @@ export default function App(){
   const filteredUsers=filter==="all"?users:filter==="flagged"?users.filter(u=>u.flagged):users.filter(u=>!u.flagged);
   const timeline=isT?TL_TXN:TL_USR;
 
-  // ── Risk distribution data ───────────────────────────────────────────────
+  // ── 7. Risk distribution data ───────────────────────────────────────────────
   const items=isT?txns:users;
   const riskDist=[
     {range:"0–20",  count:items.filter(x=>x.risk<20).length},
@@ -916,6 +1014,28 @@ export default function App(){
   return(
     <div style={{height:"100vh",background:"#07070f",color:"#e0e0e0",
       fontFamily:"'Segoe UI',sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+      {/* ── 🚨 ATTACK SIMULATION MODAL OVERLAY ── */}
+      {showAttackModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(5px)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"#0d0d1f",border:"1px solid #ff336655",borderRadius:12,padding:24,width:600,boxShadow:"0 10px 40px rgba(255,51,102,0.15)"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
+              <h2 style={{color:"#ff3366",fontFamily:"monospace",margin:0}}>🚨 SELECT ATTACK VECTOR</h2>
+              <button onClick={()=>setShowAttackModal(false)} style={{background:"none",border:"none",color:"#888",cursor:"pointer",fontSize:20}}>×</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {Object.entries(attackVectors).map(([key, vector]) => (
+                <div key={key} onClick={()=>executeAttack(key)} style={{
+                  background:"#111125",border:"1px solid #1a1a2e",padding:16,borderRadius:8,cursor:"pointer",transition:"all 0.2s"
+                }} onMouseOver={e=>e.currentTarget.style.borderColor="#ff3366"} onMouseOut={e=>e.currentTarget.style.borderColor="#1a1a2e"}>
+                  <div style={{color:"#fff",fontWeight:800,marginBottom:4}}>{vector.title}</div>
+                  <div style={{fontSize:11,color:"#888"}}>{vector.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── HEADER ── */}
       <div style={{background:"#0a0a18",borderBottom:"1px solid #1a1a2e",padding:"0 18px",
@@ -949,17 +1069,44 @@ export default function App(){
           <span>Accuracy: <strong style={{color:"#00ff88"}}>{metrics.accuracy}%</strong></span>
           <span style={{color:accent}}>Adapt: <strong>{metrics.adaptability}</strong></span>
         </div>
-        {/* Clock & bell */}
+        {/* Clock */}
         <div style={{display:"flex",alignItems:"center",gap:6,fontSize:10,fontFamily:"monospace",color:"#444",borderLeft:"1px solid #1a1a2e",paddingLeft:14}}>
           <div style={{width:5,height:5,borderRadius:"50%",background:"#00ff88",boxShadow:"0 0 5px #00ff88",animation:"pulse 2s infinite"}}/>
           🕐 {clock}
         </div>
-        <div style={{position:"relative",width:30,height:30,background:alertPulse?"#ff336620":"#111125",
-          borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",
-          border:`1px solid ${alertPulse?"#ff3366":"#1a1a2e"}`,transition:"all .3s",cursor:"pointer",flexShrink:0}}>
-          🔔
-          <div style={{position:"absolute",top:4,right:4,width:6,height:6,background:"#ff3366",borderRadius:"50%"}}/>
+        
+        {/* 🚨 FIX: FUNCTIONAL NOTIFICATIONS BELL 🚨 */}
+        <div style={{position:"relative"}}>
+          <div onClick={() => setShowNotifPanel(!showNotifPanel)} 
+            style={{width:30,height:30,background:alertPulse?"#ff336620":"#111125",
+            borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",
+            border:`1px solid ${alertPulse?"#ff3366":"#1a1a2e"}`,transition:"all .3s",cursor:"pointer",flexShrink:0}}>
+            🔔
+            <div style={{position:"absolute",top:4,right:4,width:6,height:6,background:"#ff3366",borderRadius:"50%"}}/>
+          </div>
+          
+          {/* Dropdown Panel */}
+          {showNotifPanel && (
+            <div style={{position:"absolute",top:40,right:0,width:320,background:"#0d0d1f",border:"1px solid #1a1a2e",borderRadius:8,zIndex:100,boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid #1a1a2e",fontSize:10,fontWeight:"bold",color:"#fff",display:"flex",justifyContent:"space-between"}}>
+                Recent Alerts
+                <button onClick={()=>setShowNotifPanel(false)} style={{background:"none",border:"none",color:"#888",cursor:"pointer"}}>✕</button>
+              </div>
+              <div style={{maxHeight:300,overflowY:"auto"}}>
+                {alerts.slice(0,5).map((a,i)=>(
+                  <div key={i} style={{padding:"10px 14px",borderBottom:"1px solid #1a1a2e",fontSize:10}}>
+                    <div style={{color:a.severity==="high"?"#ff3366":"#ffaa00",marginBottom:4,fontFamily:"monospace"}}>{a.time} • {a.severity?.toUpperCase()} RISK</div>
+                    <div style={{color:"#ccc"}}>{a.message}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* 🚨 SIMULATE BUTTON NOW OPENS MODAL */}
+        <SimulateButton triggerAttackSimulation={() => setShowAttackModal(true)} isSimulating={isSimulating} />
+
         <div style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}>
           <div style={{width:24,height:24,borderRadius:"50%",background:"#1a1a2e",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontFamily:"monospace",color:"#888"}}>JD</div>
           <span style={{fontSize:10,color:"#888"}}>J. Doe ▾</span>
@@ -970,13 +1117,13 @@ export default function App(){
       <div style={{background:"#08081a",borderBottom:"1px solid #1a1a2e",padding:"5px 18px",
         display:"flex",gap:0,alignItems:"center",flexShrink:0,overflowX:"auto"}}>
         {[
-          {icon:"🧠",label:"PRIMARY MODEL",    value:"Isolation Forest",        color:"#00d4ff"},
-          {icon:"⚡",label:"BOOSTER",           value:"XGBoost (score refinement)",color:"#a855f7"},
+          {icon:"🧠",label:"PRIMARY MODEL",  value:"Isolation Forest",        color:"#00d4ff"},
+          {icon:"⚡",label:"BOOSTER",        value:"XGBoost (score refinement)",color:"#a855f7"},
           {icon:"🔎",label:"ANOMALY DETECTION", value:"Unsupervised UEBA",        color:"#f59e0b"},
-          {icon:"📐",label:"EXPLAINABILITY",    value:"SHAP v0.44",               color:"#00ff88"},
-          {icon:"🔄",label:"LAST RETRAIN",      value:"Today 03:00 AM UTC",        color:"#888"},
-          {icon:"📈",label:"TRAINING DATA",     value:"2.4M UBI transactions",    color:"#888"},
-          {icon:"🎯",label:"F1 SCORE",          value:"0.961",                    color:"#00ff88"},
+          {icon:"📐",label:"EXPLAINABILITY",   value:"SHAP v0.44",               color:"#00ff88"},
+          {icon:"🔄",label:"LAST RETRAIN",     value:"Today 03:00 AM UTC",        color:"#888"},
+          {icon:"📈",label:"TRAINING DATA",    value:"2.4M UBI transactions",    color:"#888"},
+          {icon:"🎯",label:"F1 SCORE",         value:"0.961",                    color:"#00ff88"},
         ].map((m,i,arr)=>(
           <div key={i} style={{display:"flex",alignItems:"center",gap:6,
             paddingRight:18,marginRight:18,flexShrink:0,
@@ -1030,13 +1177,13 @@ export default function App(){
           {/* Stat strip */}
           <div style={{display:"flex",borderBottom:"1px solid #1a1a2e",flexShrink:0}}>
             {(isT?[
-              {l:"TRANSACTIONS",  v:txns.length,          sub:"today",                   ac:accent},
-              {l:"FRAUD ALERTS",  v:flaggedTxns.length,   sub:`${Math.round(flaggedTxns.length/(txns.length||1)*100)}% rate`, ac:"#ff3366"},
+              {l:"TRANSACTIONS",  v:txns.length,         sub:"today",                    ac:accent},
+              {l:"FRAUD ALERTS",  v:flaggedTxns.length,   sub:`${txns.length?Math.round(flaggedTxns.length/txns.length*100):0}% rate`, ac:"#ff3366"},
               {l:"AVG RISK",      v:Math.round(txns.reduce((a,t)=>a+t.risk,0)/(txns.length||1)), sub:"score", ac:"#ffaa00"},
               {l:"BLOCKED ₹",     v:`${(flaggedTxns.reduce((a,t)=>a+t.amount,0)/100000).toFixed(1)}L`, sub:"saved", ac:"#00ff88"},
             ]:[
-              {l:"EMPLOYEES",     v:users.length,          sub:"monitored",               ac:accent},
-              {l:"ROGUE INSIDERS",v:flaggedUsers.length,   sub:`${Math.round(flaggedUsers.length/(users.length||1)*100)}% risk`, ac:"#ff3366"},
+              {l:"EMPLOYEES",     v:users.length,        sub:"monitored",                ac:accent},
+              {l:"ROGUE INSIDERS",v:flaggedUsers.length,  sub:`${users.length?Math.round(flaggedUsers.length/users.length*100):0}% risk`, ac:"#ff3366"},
               {l:"OFF-HOURS",     v:users.filter(u=>u.off_hours_access).length, sub:"logins", ac:"#ffaa00"},
               {l:"DATA EXFIL",    v:`${users.filter(u=>u.flagged).reduce((a,u)=>a+(u.data_volume||0),0)} MB`, sub:"suspicious", ac:"#a855f7"},
             ]).map((s,i)=>(
@@ -1220,6 +1367,9 @@ export default function App(){
             ))}
           </div>
 
+          {/* 🚨 ML Result Panel (Appears instantly when simulated) */}
+          <MLResultPanel mlResult={mlResult} />
+
           {/* Case Detail Panel */}
           <div style={{background:"#0d0d1f",borderBottom:"1px solid #1a1a2e",overflowY:"auto",maxHeight:"38vh",flexShrink:0}}>
             <CaseDetail
@@ -1260,3 +1410,74 @@ export default function App(){
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  EXTRA COMPONENTS (SIMULATE BUTTON & ML PANEL)
+// ═══════════════════════════════════════════════════════════════════════════
+const SimulateButton = ({ triggerAttackSimulation, isSimulating }) => (
+  <button
+    onClick={triggerAttackSimulation}
+    disabled={isSimulating}
+    style={{
+      background:    isSimulating ? "#7f1d1d" : "linear-gradient(135deg, #ff3366, #cc0033)",
+      border:        "1px solid #ff336677",
+      color:         "#fff",
+      padding:       "6px 14px",
+      borderRadius:  7,
+      cursor:        isSimulating ? "not-allowed" : "pointer",
+      fontSize:      11,
+      fontWeight:    800,
+      fontFamily:    "monospace",
+      display:       "flex",
+      alignItems:    "center",
+      gap:           6,
+      boxShadow:     isSimulating ? "none" : "0 0 12px #ff336644",
+    }}
+  >
+    {isSimulating ? "⏳ SCORING..." : "🚨 SIMULATE ATTACK"}
+  </button>
+);
+
+const MLResultPanel = ({ mlResult }) => {
+  if (!mlResult) return null;
+  return (
+    <div style={{
+      background:   "#0d0d1f",
+      border:       `1px solid ${mlResult.risk_score >= 70 ? "#ff336655" : "#ffaa0055"}`,
+      borderLeft:   `3px solid ${mlResult.risk_score >= 70 ? "#ff3366" : "#ffaa00"}`,
+      borderRadius: 8,
+      padding:      "12px 14px",
+      margin:       "8px 10px",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 9, fontFamily: "monospace", color: "#00d4ff", letterSpacing: 2 }}>LIVE ML RESULT</span>
+        <span style={{ fontSize: 9, fontFamily: "monospace", color: mlResult.risk_score >= 70 ? "#ff3366" : "#ffaa00" }}>
+          {mlResult.action_taken}
+        </span>
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <span style={{ fontSize: 10, color: "#888" }}>Blended Risk Score</span>
+          <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "monospace", color: mlResult.risk_score >= 70 ? "#ff3366" : "#ffaa00" }}>
+            {mlResult.risk_score}/100
+          </span>
+        </div>
+        <div style={{ background: "#1a1a2e", borderRadius: 4, height: 6, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${mlResult.risk_score}%`, background: mlResult.risk_score >= 70 ? "#ff3366" : "#ffaa00" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ flex: 1, background: "#111125", borderRadius: 6, padding: "6px", textAlign: "center" }}>
+          <div style={{ fontSize: 8, color: "#444" }}>XGBoost</div>
+          <div style={{ fontSize: 13, color: "#a855f7" }}>{(mlResult.xgb_confidence || (mlResult.xgb_fraud_prob * 100))?.toFixed(1)}%</div>
+        </div>
+        <div style={{ flex: 1, background: "#111125", borderRadius: 6, padding: "6px", textAlign: "center" }}>
+          <div style={{ fontSize: 8, color: "#444" }}>IsoForest</div>
+          <div style={{ fontSize: 13, color: "#00d4ff" }}>{(mlResult.iso_confidence || (mlResult.iso_anomaly_score * 100))?.toFixed(1)}%</div>
+        </div>
+      </div>
+    </div>
+  );
+};
