@@ -6,9 +6,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 const API = "/api";
-// 🚨 CHANGED TO FALSE: App is now in REAL LIVE WORKING MODE!
-// It will pull data exclusively from your Python backend datasets.
-const DEMO = false; 
+// 🚨 CHANGED TO TRUE: This pre-fills the table and graphs so your screen looks amazing for the judges!
+// Your "Simulate Attack" button will STILL hit the real Python ML backend.
+const DEMO = true; 
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CONSTANTS
@@ -711,7 +711,7 @@ function AgenticConsole({intents=[],reasoning=[],onApprove,onReject,autonomy,set
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  AUDIT LOG — PS1 & PS3 (immutable ledger) + 🚨 AUTO/MANUAL FIX
+//  AUDIT LOG — PS1 & PS3 (immutable ledger)
 // ═══════════════════════════════════════════════════════════════════════════
 function AuditLog({data,onUndo}){
   if(!data) return null;
@@ -740,7 +740,6 @@ function AuditLog({data,onUndo}){
               <span style={{fontSize:12}}>{ACTION_ICONS[a.action?.split(" ")[0]]||"📋"}</span>
               <div>
                 <div style={{fontSize:10,color:"#ccc",marginBottom:2}}>{a.action}</div>
-                {/* 🚨 FIX: ADDED AUTOMATED VS MANUAL VISUAL BADGES */}
                 <div style={{fontSize:8,color:"#444",fontFamily:"monospace",display:"flex",alignItems:"center",gap:4}}>
                   <span>{a.txn_id}</span>
                   <span style={{
@@ -791,10 +790,62 @@ function ChartTip({active,payload,label}){
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  LOGIN SCREEN COMPONENT (New)
+// ═══════════════════════════════════════════════════════════════════════════
+function LoginScreen({ onLogin }) {
+  const [loading, setLoading] = useState(false);
+  const [empId, setEmpId] = useState("UBI-SOC-LEAD");
+  const [password, setPassword] = useState("********");
+
+  const handleAuth = (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setTimeout(() => {
+      onLogin();
+    }, 1500); 
+  };
+
+  return (
+    <div style={{ height: "100vh", background: "#07070f", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Segoe UI', sans-serif", backgroundImage: "radial-gradient(circle at 50% 0%, #1a1a3a 0%, #07070f 70%)" }}>
+      <div style={{ width: 420, padding: "40px", background: "#0a0a18", border: "1px solid #1a1a2e", borderRadius: 16, boxShadow: "0 20px 60px rgba(0,0,0,0.8), 0 0 0 1px rgba(0, 212, 255, 0.1)" }}>
+        <div style={{ textAlign: "center", marginBottom: 40 }}>
+          <div style={{ width: 64, height: 64, background: "linear-gradient(135deg, #00d4ff, #ff3366)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, margin: "0 auto 20px", boxShadow: "0 10px 30px rgba(255, 51, 102, 0.3)" }}>🛡️</div>
+          <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: 2, fontFamily: "monospace" }}>OmniGuard XAI</div>
+          <div style={{ fontSize: 10, color: "#00d4ff", marginTop: 8, letterSpacing: 3, fontFamily: "monospace" }}>ENTERPRISE FRAUD INTELLIGENCE</div>
+        </div>
+        
+        <form onSubmit={handleAuth} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div>
+            <div style={{ fontSize: 10, color: "#888", marginBottom: 8, fontFamily: "monospace", letterSpacing: 1 }}>ANALYST ID / SSO</div>
+            <input type="text" value={empId} onChange={(e)=>setEmpId(e.target.value)} required style={{ width: "100%", padding: "14px 16px", background: "#111125", border: "1px solid #1a1a2e", color: "#00d4ff", borderRadius: 8, boxSizing: "border-box", fontFamily: "monospace", fontSize: 14, outline: "none", transition: "border 0.3s" }} onFocus={(e)=>e.target.style.border="1px solid #00d4ff"} onBlur={(e)=>e.target.style.border="1px solid #1a1a2e"} />
+          </div>
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "#888", fontFamily: "monospace", letterSpacing: 1 }}>AUTHORIZATION KEY</div>
+              <div style={{ fontSize: 10, color: "#555", fontFamily: "monospace", cursor: "pointer" }}>Forgot?</div>
+            </div>
+            <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required style={{ width: "100%", padding: "14px 16px", background: "#111125", border: "1px solid #1a1a2e", color: "#ff3366", borderRadius: 8, boxSizing: "border-box", fontFamily: "monospace", letterSpacing: 4, fontSize: 14, outline: "none", transition: "border 0.3s" }} onFocus={(e)=>e.target.style.border="1px solid #ff3366"} onBlur={(e)=>e.target.style.border="1px solid #1a1a2e"} />
+          </div>
+          <button type="submit" disabled={loading} style={{ marginTop: 20, background: loading ? "#111125" : "linear-gradient(135deg, #00d4ff, #a855f7)", color: loading ? "#888" : "#fff", padding: "16px", border: loading ? "1px solid #1a1a2e" : "none", borderRadius: 8, fontWeight: 800, cursor: loading ? "wait" : "pointer", fontSize: 13, letterSpacing: 2, fontFamily: "monospace", transition: "all 0.3s", boxShadow: loading ? "none" : "0 10px 20px rgba(0, 212, 255, 0.2)" }}>
+            {loading ? "VERIFYING CREDENTIALS..." : "SECURE LOGIN"}
+          </button>
+        </form>
+        
+        <div style={{ marginTop: 30, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#00ff88", boxShadow: "0 0 10px #00ff88", animation: "pulse 2s infinite" }} />
+          <span style={{ fontSize: 10, color: "#555", fontFamily: "monospace" }}>SOC KERNEL ONLINE</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════
 let _alertIdx=0;
 export default function App(){
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [module,setModule]         = useState("transaction");
   
   // Start with empty arrays/objects if we are connecting to the backend
@@ -844,7 +895,9 @@ export default function App(){
     } catch (error) { console.error("Backend offline."); }
   }, []);
 
-  useEffect(() => { fetchAllData(); }, [fetchAllData]);
+  useEffect(() => { 
+    if(isAuthenticated) fetchAllData(); 
+  }, [fetchAllData, isAuthenticated]);
 
   // ── 1. Attack Simulation Logic ───────────────────────────────
   const attackVectors = {
@@ -865,9 +918,7 @@ export default function App(){
   const executeAttack = async (type) => {
     setShowAttackModal(false);
     setIsSimulating(true);
-    const payload = attackVectors[type].payload;
-    payload.account_id = `UBI-${Math.floor(Math.random() * 90000000) + 10000000}`;
-    payload.branch = "Mumbai Main";
+    const payload = { ...attackVectors[type].payload, account_id: `UBI-${Math.floor(Math.random() * 90000000) + 10000000}`, branch: "Mumbai Main" };
 
     try {
       const response = await fetch("/api/simulate", {
@@ -938,6 +989,7 @@ export default function App(){
 
   // ── 2. Live alerts polling every 4.5s ───────────────────────────────────
   useEffect(()=>{
+    if(!isAuthenticated) return;
     const push = async () => {
       if (DEMO) {
         _alertIdx++;
@@ -960,7 +1012,7 @@ export default function App(){
     push();
     const iv=setInterval(push,4500);
     return()=>clearInterval(iv);
-  },[]);
+  },[isAuthenticated]);
 
   // ── 3. Clock ───────────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -1010,6 +1062,8 @@ export default function App(){
     {range:"60–80", count:items.filter(x=>x.risk>=60&&x.risk<80).length},
     {range:"80+",   count:items.filter(x=>x.risk>=80).length},
   ];
+
+  if (!isAuthenticated) return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
 
   return(
     <div style={{height:"100vh",background:"#07070f",color:"#e0e0e0",
