@@ -1,250 +1,469 @@
 """
-OmniGuard XAI — Banking Fraud Intelligence API
-FastAPI backend · Union Bank of India Hackathon Prototype
+OmniGuard XAI — Real-Time Scoring API v3.0 (REAL DATA & LIVE GRAPH)
+===================================================================
+FastAPI server that:
+  1. Loads IsolationForest + XGBoost models on startup.
+  2. Loads REAL synthetic data from the /data folder.
+  3. Serves a live, dynamic Relational Graph based on transactions.
+  4. Ingests simulated attacks into the live transaction feed and graph.
+  5. Publishes fraud alerts to Kafka (optional).
 """
 
-from fastapi import FastAPI
+import os, uuid, json, time, threading, logging
+from datetime import datetime
+from typing import Optional, List
+from random import randint, random, choice
+
+import numpy as np
+import pandas as pd
+import joblib
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-import random
-from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="OmniGuard XAI API", version="2.4.1")
+# 🚨 DATABASE IMPORTS (ADDED) 🚨
+from sqlalchemy.orm import Session
+import models
+from database import engine, get_db
 
+# 🚨 CREATE DATABASE TABLES AUTOMATICALLY ON STARTUP
+models.Base.metadata.create_all(bind=engine)
+
+# ── Optional Kafka ─────────────────────────────────────────────────────────
+try:
+    from kafka import KafkaProducer
+    KAFKA_AVAILABLE = True
+except ImportError:
+    KAFKA_AVAILABLE = False
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("omniguard")
+
+# ── App ────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="OmniGuard XAI API",
+    description="Enterprise Financial Fraud Detection — Union Bank of India",
+    version="3.0.0"
+)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# ── Reference Data ─────────────────────────────────────────────────────────
-PAYEES = ["NEFT Transfer","RTGS Payment","ATM Cash","POS Terminal","Online Banking",
-          "Cheque Deposit","Unknown Payee","Crypto Gateway","Shell Company Ltd","Offshore Account"]
-CITIES = ["Mumbai","Delhi","Bangalore","Hyderabad","Chennai","Kolkata","Pune","Ahmedabad","Dubai","Singapore"]
-DEPARTMENTS = ["Core Banking","Treasury","Loan Processing","IT Admin","Branch Operations",
-               "Audit & Compliance","Risk Management","Customer Service","HR","Finance"]
-EMP_NAMES = [
-    "Arun Kumar","Sunita Sharma","Rajesh Patel","Priya Mehta","Vikram Nair",
-    "Anita Singh","Suresh Reddy","Kavya Iyer","Amit Joshi","Deepa Rao",
-    "Rohit Gupta","Meera Bhat","Sanjay Desai","Pooja Malhotra","Nikhil Tiwari",
-    "Renu Verma","Aditya Krishnan","Swati Pandey","Manoj Dubey","Lakshmi Pillai",
-]
-INDIAN_BANKS = [
-    {"name": "State Bank of India",    "abbr": "SBI",  "sponsor": False},
-    {"name": "HDFC Bank",              "abbr": "HDFC", "sponsor": False},
-    {"name": "ICICI Bank",             "abbr": "ICICI","sponsor": False},
-    {"name": "Union Bank of India",    "abbr": "UBI",  "sponsor": True},
-    {"name": "Punjab National Bank",   "abbr": "PNB",  "sponsor": False},
-    {"name": "Bank of Baroda",         "abbr": "BOB",  "sponsor": False},
-]
-ALERT_POOL = [
-    {"message":"TXN-88231 ₹8,74,000 to Offshore Account at 2:14 AM", "severity":"high","module":"transaction"},
-    {"message":"EMP-2004 (Treasury) bulk export 612 MB at 1:47 AM",   "severity":"high","module":"user"},
-    {"message":"TXN-88198 risk 94 — Crypto Gateway, UBI-87654321",    "severity":"high","module":"transaction"},
-    {"message":"EMP-2007 privilege escalation on Core Banking module", "severity":"high","module":"user"},
-    {"message":"TXN-88045 geo anomaly: Mumbai → Dubai, 2,400km",       "severity":"med", "module":"transaction"},
-    {"message":"EMP-2011 off-hours login 3:22 AM (baseline 9 AM)",     "severity":"med", "module":"user"},
-    {"message":"EMP-2002 accessed 8 restricted modules (baseline 3)",  "severity":"high","module":"user"},
-    {"message":"TXN-88312 velocity: 5 txns in 90 seconds, same IP",   "severity":"high","module":"transaction"},
-    {"message":"TXN-88401 Shell Company Ltd ₹15,00,000 flagged",       "severity":"high","module":"transaction"},
-    {"message":"EMP-2015 unauthorised account mod in Loan Processing", "severity":"high","module":"user"},
-]
+# ── Global State ───────────────────────────────────────────────────────────
+MODEL_DIR = "models"
+DATA_DIR  = "data"
+FEATURES  = ["amount", "hour", "latency", "distance_km", "velocity", "is_new_beneficiary"]
+_iso = _xgb = _scaler = _features = _producer = None
 
-_alert_idx = 0
+# In-memory databases
+transactions_store: List[dict] = []
+users_store:        List[dict] = []
+audit_log:          List[dict] = []
+alerts_store:       List[dict] = []
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-def xai_txn(is_fraud, amount, hour, payee, city):
-    if not is_fraud: return []
-    f = []
-    if amount > 100000: f.append({"label":"Mouse Trajectory Deviation",  "value":48,"direction":"risk"})
-    if hour < 6:        f.append({"label":"IP Geolocation Distance",     "value":35,"direction":"risk"})
-    if any(x in payee for x in ["Unknown","Crypto","Shell","Offshore"]):
-                        f.append({"label":"Graph Cluster Proximity",     "value":28,"direction":"risk"})
-    if city in ["Dubai","Singapore"]:
-                        f.append({"label":"Time of Day Anomaly",         "value":22,"direction":"risk"})
-    f.append({"label":"Device Fingerprint Match","value":8,"direction":"safe"})
-    f.append({"label":"Transaction Amount",       "value":6,"direction":"safe"})
-    return f[:6]
+KAFKA_TOPIC  = "fraud-alerts"
+KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
 
-def xai_user(is_rogue, off_hours, data_vol, priv_esc, norm_vol):
-    if not is_rogue: return []
-    f = []
-    if off_hours:                  f.append({"label":"Login Hour Deviation",       "value":42,"direction":"risk"})
-    if data_vol > norm_vol * 5:    f.append({"label":"Data Export Volume Spike",   "value":35,"direction":"risk"})
-    if priv_esc:                   f.append({"label":"Privilege Escalation Attempt","value":30,"direction":"risk"})
-    f.append({"label":"Module Access Pattern",         "value":20,"direction":"risk"})
-    f.append({"label":"Device Fingerprint Match",      "value": 9,"direction":"safe"})
-    f.append({"label":"Historical Clean Record",       "value": 5,"direction":"safe"})
-    return f[:6]
+# ── Pydantic Schemas ───────────────────────────────────────────────────────
+class TransactionPayload(BaseModel):
+    amount:             float = Field(..., gt=0,  description="Amount in INR")
+    hour:               int   = Field(..., ge=0,  le=23)
+    latency:            float = Field(..., gt=0,  description="Network latency ms")
+    distance_km:        float = Field(..., ge=0,  description="Geo distance from baseline")
+    velocity:           int   = Field(..., ge=0,  description="Txns in last 10 min")
+    is_new_beneficiary: int   = Field(..., ge=0,  le=1)
+    account_id:         Optional[str] = None
+    branch:             Optional[str] = None
+    merchant:           Optional[str] = None
 
-def make_transactions(n=100):
-    now = datetime.now()
-    rows = []
-    for i in range(n):
-        fraud  = random.random() < 0.13
-        p_idx  = random.randint(6,9) if fraud else random.randint(0,5)
-        amt    = random.randint(100000,2500000) if fraud else random.randint(500,80000)
-        hr     = random.randint(1,4)  if fraud else random.randint(8,20)
-        city   = random.choice(["Dubai","Singapore"]) if fraud else random.choice(CITIES[:6])
-        payee  = PAYEES[p_idx]
-        rows.append({
-            "id":       f"TXN-{88000+i}",
-            "merchant": payee,
-            "amount":   amt,
-            "avg_amount": random.randint(20000,60000),
-            "city":     city,
-            "hour":     hr,
-            "risk":     random.randint(72,97) if fraud else random.randint(3,35),
-            "flagged":  fraud,
-            "time":     (now-timedelta(minutes=(n-i)*3)).strftime("%H:%M:%S"),
-            "type":     random.choice(["Credential Stuffing","Account Takeover"]) if fraud else "Normal",
-            "latency":  random.randint(12,95),
-            "account":  f"UBI-{random.randint(10000000,99999999)}",
-            "branch":   random.choice(["Mumbai Main","Delhi CP","Bangalore MG Road","Chennai Anna Nagar"]),
-            "xai":      xai_txn(fraud,amt,hr,payee,city),
+class ScoringResponse(BaseModel):
+    transaction_id:    str
+    is_fraud:          bool
+    risk_score:        int
+    action_taken:      str
+    iso_anomaly_score: float
+    xgb_fraud_prob:    float
+    xai_factors:       dict
+    timestamp:         str
+    processing_ms:     float
+
+# ── Startup (Load Models AND Real Data) ────────────────────────────────────
+@app.on_event("startup")
+async def load_system():
+    global _iso, _xgb, _scaler, _features, _producer
+    
+    # 1. Load Models
+    log.info("Loading ML models...")
+    try:
+        _iso      = joblib.load(f"{MODEL_DIR}/iso_model.pkl")
+        _xgb      = joblib.load(f"{MODEL_DIR}/xgb_model.pkl")
+        _scaler   = joblib.load(f"{MODEL_DIR}/scaler.pkl")
+        _features = joblib.load(f"{MODEL_DIR}/features.pkl")
+        log.info("✅ IsolationForest + XGBoost loaded")
+    except FileNotFoundError:
+        log.warning("⚠️  Models not found — run train.py first.")
+
+    # 2. Load Real Datasets into memory
+    log.info("Loading REAL datasets into memory...")
+    try:
+        # Load External Transactions
+        df_tx = pd.read_csv(f"{DATA_DIR}/external_transactions.csv").head(150) # Load top 150
+        for idx, row in df_tx.iterrows():
+            transactions_store.append({
+                "id": f"TXN-{88000+idx}",
+                "merchant": "Online Merchant" if row['label'] == 0 else "High-Risk Payee",
+                "account": f"UBI-{randint(10000000, 99999999)}",
+                "amount": float(row['amount']),
+                "city": "Mumbai" if row['distance_km'] < 100 else "Foreign IP",
+                "hour": int(row['hour']),
+                "risk": randint(5, 30) if row['label'] == 0 else randint(75, 98),
+                "flagged": bool(row['label'] == 1),
+                "latency": int(row['latency']),
+                "type": "Normal" if row['label'] == 0 else "Blocked",
+            })
+        
+        # Load Internal Employees
+        df_emp = pd.read_csv(f"{DATA_DIR}/internal_employee_logs.csv").head(50)
+        for idx, row in df_emp.iterrows():
+            users_store.append({
+                "id": row['employee_id'],
+                "name": f"Employee {idx}",
+                "department": row['department'],
+                "role": "Officer",
+                "last_login": f"{row['login_hour']}:00",
+                "data_volume": int(row['data_downloaded_mb']),
+                "risk": randint(5,20) if row['is_insider_threat'] == 0 else randint(80,95),
+                "flagged": bool(row['is_insider_threat'] == 1),
+                "latency": randint(10,50),
+                "anomalies": ["High Data Export"] if row['is_insider_threat'] == 1 else []
+            })
+        log.info("✅ Datasets loaded successfully!")
+    except Exception as e:
+        log.error(f"⚠️ Could not load CSVs (Did you run train.py?): {e}")
+
+    # 3. Connect Kafka
+    if KAFKA_AVAILABLE:
+        try:
+            _producer = KafkaProducer(
+                bootstrap_servers=[KAFKA_BROKER],
+                value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                request_timeout_ms=2000,
+                api_version_auto_timeout_ms=2000
+            )
+            log.info(f"✅ Kafka connected to {KAFKA_BROKER}")
+        except Exception as e:
+            log.warning(f"⚠️  Kafka unavailable: {e}. Running without streaming.")
+
+# ── Scoring Logic ──────────────────────────────────────────────────────────
+def _heuristic_score(row):
+    score = 0.0
+    if row["amount"]      > 500_000:             score += 35
+    if row["hour"]        in [0,1,2,3,4,23]:     score += 25
+    if row["latency"]     > 150:                 score += 15
+    if row["distance_km"] > 2000:                score += 15
+    if row["velocity"]    >= 5:                  score += 10
+    if row["is_new_beneficiary"] == 1:           score += 10
+    return min(score / 110.0, 1.0), min(score / 100.0, 1.0)
+
+def _compute_xai(row, xgb_prob, iso_norm):
+    factors = {}
+    if row["amount"] > 500_000:
+        factors["amount_spike"] = {"label": f"Amount ₹{row['amount']:,.0f} — {row['amount']/50000:.0f}x above avg", "contribution": 38, "direction": "risk"}
+    if row["hour"] in [0,1,2,3,4,23]:
+        factors["off_hours"] = {"label": f"Transaction at {row['hour']}:00 — off-hours", "contribution": 25, "direction": "risk"}
+    if row["distance_km"] > 2000:
+        factors["geo_anomaly"] = {"label": f"Location {row['distance_km']:.0f}km from baseline", "contribution": 20, "direction": "risk"}
+    if row["latency"] > 150:
+        factors["high_latency"] = {"label": f"Latency {row['latency']:.0f}ms — possible VPN/proxy", "contribution": 12, "direction": "risk"}
+    if row["velocity"] >= 5:
+        factors["velocity"] = {"label": f"{row['velocity']} txns in 10 min — velocity attack", "contribution": 15, "direction": "risk"}
+    if row["is_new_beneficiary"] == 1:
+        factors["new_beneficiary"] = {"label": "New beneficiary — first-time payee", "contribution": 8, "direction": "risk"}
+    if not factors:
+        factors["normal"] = {"label": "All features within normal baseline", "contribution": 0, "direction": "safe"}
+    factors["model_blend"] = {"label": f"XGBoost: {xgb_prob*100:.1f}% | IsoForest: {iso_norm*100:.1f}%", "contribution": 0, "direction": "info"}
+    return factors
+
+def _publish_kafka(result):
+    if _producer is None: return
+    try:
+        _producer.send(KAFKA_TOPIC, value=result)
+        _producer.flush(timeout=1)
+    except Exception: pass
+
+# ── Endpoints ──────────────────────────────────────────────────────────────
+@app.post("/api/simulate", response_model=ScoringResponse)
+async def simulate(payload: TransactionPayload, db: Session = Depends(get_db)):
+    """
+    Score a transaction, inject it into the live UI feed, and update graph!
+    """
+    t0  = time.perf_counter()
+    row = {f: getattr(payload, f) for f in FEATURES}
+    df  = pd.DataFrame([row])
+
+    if _iso is not None and _xgb is not None:
+        df_scaled     = _scaler.transform(df[_features])
+        iso_raw       = _iso.decision_function(df_scaled)[0]
+        iso_norm      = float(np.clip((-iso_raw + 0.5), 0.0, 1.0))
+        xgb_prob      = float(_xgb.predict_proba(df[_features])[0][1])
+    else:
+        iso_norm, xgb_prob = _heuristic_score(row)
+
+    blended    = (0.60 * xgb_prob) + (0.40 * iso_norm)
+    risk_score = int(round(blended * 100))
+
+    if risk_score >= 70:
+        is_fraud, action = True,  "BLOCK"
+    elif risk_score >= 40:
+        is_fraud, action = False, "STEP-UP MFA"
+    else:
+        is_fraud, action = False, "ALLOW"
+
+    txn_id = f"TXN-{uuid.uuid4().hex[:8].upper()}"
+    xai_data = _compute_xai(row, xgb_prob, iso_norm)
+
+    # 🚨 Inject explicitly into the live UI Table/Graph feed
+    ui_txn = {
+        "id": txn_id,
+        "merchant": payload.merchant or "Unknown Attacker",
+        "account": payload.account_id or "UBI-ATTACKED",
+        "amount": payload.amount,
+        "city": "Dubai (Proxy)" if payload.distance_km > 1000 else "Mumbai",
+        "hour": payload.hour,
+        "risk": risk_score,
+        "flagged": is_fraud,
+        "latency": int((time.perf_counter() - t0) * 1000),
+        "type": action,
+        "xai": xai_data
+    }
+    
+    # 🚨 SAVE DIRECTLY TO SQLITE DATABASE
+    try:
+        db_txn = models.Transaction(
+            id=ui_txn["id"],
+            merchant=ui_txn["merchant"],
+            account=ui_txn["account"],
+            amount=ui_txn["amount"],
+            city=ui_txn["city"],
+            hour=ui_txn["hour"],
+            risk=ui_txn["risk"],
+            flagged=ui_txn["flagged"],
+            latency=ui_txn["latency"],
+            type=ui_txn["type"],
+            xai=ui_txn["xai"]
+        )
+        db.add(db_txn)
+        db.commit()
+        log.info(f"✅ Transaction {txn_id} saved to Database!")
+    except Exception as e:
+        log.error(f"⚠️ Failed to save to Database: {e}")
+
+    # Prepend to top of lists so it shows up instantly
+    transactions_store.insert(0, ui_txn)
+    if len(transactions_store) > 500: transactions_store.pop()
+
+    if is_fraud:
+        audit_log.insert(0, {
+            "id": f"ACT-{uuid.uuid4().hex[:6].upper()}",
+            "action": f"{action} — {txn_id}",
+            "txn_id": txn_id, "risk_score": risk_score,
+            "method": "ML Ensemble", "automated": True,
+            "time_ago": "0s ago", "timestamp": datetime.utcnow().isoformat() + "Z", "reverted": False
         })
-    return rows[::-1]
-
-def make_users(n=20):
-    rows = []
-    for i, name in enumerate(EMP_NAMES[:n]):
-        rogue   = random.random() < 0.28
-        norm_hr = random.randint(9,11)
-        norm_dv = random.randint(10,25)
-        priv    = rogue and random.random() > 0.5
-        off_hr  = rogue
-        dv      = random.randint(400,1200) if rogue else random.randint(5,40)
-        rows.append({
-            "id":             f"EMP-{2000+i}",
-            "name":           name,
-            "department":     DEPARTMENTS[i % len(DEPARTMENTS)],
-            "role":           random.choice(["Manager","Officer","Analyst","Admin","Supervisor"]),
-            "employee_id":    f"UBI{random.randint(10000,99999)}",
-            "normal_login_hour": norm_hr,
-            "last_login":     f"{random.randint(1,3):02d}:{random.randint(0,59):02d} AM" if rogue else f"{norm_hr}:{random.randint(0,59):02d} AM",
-            "normal_data_vol":norm_dv,
-            "data_volume":    dv,
-            "privilege_escalation": priv,
-            "off_hours_access": off_hr,
-            "modules_normal": 3,
-            "modules_accessed": random.randint(6,12) if rogue else random.randint(2,4),
-            "risk":           random.randint(68,95) if rogue else random.randint(3,28),
-            "flagged":        rogue,
-            "anomalies":      [a for a in ["Off-hours login","Bulk data export","Privilege escalation"] if random.random()>0.35] if rogue else [],
-            "activity":       [{"hour":f"{h+8}:00","events": random.randint(20,60) if (rogue and h<2) else random.randint(0,15)} for h in range(8)],
-            "latency":        random.randint(15,75),
-            "xai":            xai_user(rogue,off_hr,dv,priv,norm_dv),
-            "branch":         random.choice(["Head Office Mumbai","Zonal Office Delhi","Regional Office Bangalore"]),
+        alerts_store.insert(0, {
+            "id": txn_id,
+            "message": f"🚨 {txn_id} — Risk {risk_score} — {action}",
+            "severity": "high", "module": "transaction", 
+            "time": datetime.utcnow().strftime("%H:%M:%S"),
+            "risk_score": risk_score, "xai": xai_data
         })
-    return rows
 
-def make_graph():
-    nodes, edges = [], []
-    users = make_users(12)
-    for u in users:
-        nodes.append({"id":f"u_{u['id']}","type":"user","label":u["name"].split()[0],"risk":u["risk"],"flagged":u["flagged"]})
-    for i in range(14):
-        nodes.append({"id":f"d_{i}","type":"device","label":f"DEV-{i}","risk":random.randint(5,90),"flagged":random.random()<0.2})
-    for i,p in enumerate(PAYEES[:8]):
-        nodes.append({"id":f"m_{i}","type":"merchant","label":p.split()[0],"risk":random.randint(5,80),"flagged":i>=6})
-    uids  = [n["id"] for n in nodes if n["type"]=="user"]
-    dids  = [n["id"] for n in nodes if n["type"]=="device"]
-    mids  = [n["id"] for n in nodes if n["type"]=="merchant"]
-    for uid in uids:
-        for _ in range(random.randint(1,2)):
-            edges.append({"source":uid,"target":random.choice(dids),"suspicious":random.random()<0.2})
-    for did in dids[:10]:
-        edges.append({"source":did,"target":random.choice(mids),"suspicious":random.random()<0.25})
-    return {"nodes":nodes,"edges":edges}
+    result = {
+        "transaction_id":    txn_id,
+        "is_fraud":          is_fraud,
+        "risk_score":        risk_score,
+        "action_taken":      action,
+        "iso_anomaly_score": round(iso_norm, 4),
+        "xgb_fraud_prob":    round(xgb_prob, 4),
+        "xai_factors":       xai_data,
+        "timestamp":         datetime.utcnow().isoformat() + "Z",
+        "processing_ms":     round((time.perf_counter() - t0) * 1000, 2)
+    }
 
-# ── Startup data ───────────────────────────────────────────────────────────
-_txns   = make_transactions()
-_users  = make_users()
-_graph  = make_graph()
-_intents = [
-    {"id":"TX-88492","action":"Freeze account and initiate step-up biometric verification",
-     "confidence":78,"severity":"high","status":"pending",
-     "reasons":["Account linked to 3 known compromised nodes","Transaction to newly established vendor (< 30 days)","Geographic anomaly: 2,400km from typical location"]},
-    {"id":"TX-91203","action":"Request additional identity verification via SMS OTP",
-     "confidence":65,"severity":"med","status":"pending",
-     "reasons":["Unusual transaction time (3:42 AM local)","Device fingerprint partially matches known fraud ring"]},
-    {"id":"EMP-2004","action":"Suspend session and notify CISO for privileged user investigation",
-     "confidence":89,"severity":"high","status":"pending",
-     "reasons":["Bulk export 612MB customer data at 1:47 AM","Privilege escalation attempt on Core Banking module","IP matches external proxy server"]},
-]
-_audit = [
-    {"id":f"ACT-{1000+i}","action":random.choice(["Alert dispatched","Account frozen","SMS OTP triggered","Case escalated","Report filed"]),
-     "txn_id":f"TXN-{random.randint(88000,88100)}","method":"Detection" if random.random()>0.3 else "Manual",
-     "automated":random.random()>0.3,"time_ago":f"{i*2}m ago" if i>0 else "0s ago","reverted":False}
-    for i in range(20)
-]
-_reasoning = [
-    {"time":"21:27:38","agent":"Ingestion",    "message":"Transaction TXN-88492 received. Running feature extraction pipeline."},
-    {"time":"21:27:40","agent":"Ingestion",    "message":"Behavioural pattern analysis complete. 4 anomalies detected."},
-    {"time":"21:27:42","agent":"Policy",       "message":"Risk threshold breached (score 87). Escalating to Verification agent."},
-    {"time":"21:27:44","agent":"Verification", "message":"Graph cluster proximity check initiated."},
-    {"time":"21:27:46","agent":"Verification", "message":"Node linked to 3 compromised accounts in active fraud ring."},
-    {"time":"21:27:48","agent":"Policy",       "message":"SHAP attribution computed. Top factor: Mouse Trajectory Deviation (48%)."},
-    {"time":"21:27:50","agent":"Action",       "message":"Intent generated: Freeze account + step-up biometric. Awaiting human approval."},
-]
+    if is_fraud:
+        threading.Thread(target=_publish_kafka, args=(result,), daemon=True).start()
 
-# ── Routes ─────────────────────────────────────────────────────────────────
+    log.info(f"[SCORE] {txn_id} | Risk:{risk_score} | {action}")
+    return result
+
 @app.get("/api/transactions")
-def get_transactions():
-    return {"transactions":_txns,"total":len(_txns),"flagged":sum(1 for t in _txns if t["flagged"])}
+async def get_transactions(limit: int = 100, db: Session = Depends(get_db)):
+    try:
+        # Fetch actual transactions from database ordered by newest
+        db_txns = db.query(models.Transaction).order_by(models.Transaction.timestamp.desc()).limit(limit).all()
+        if db_txns and len(db_txns) > 0:
+            formatted_txns = []
+            for t in db_txns:
+                formatted_txns.append({
+                    "id": t.id, "merchant": t.merchant, "account": t.account, 
+                    "amount": t.amount, "city": t.city, "hour": t.hour, 
+                    "risk": t.risk, "flagged": t.flagged, "latency": t.latency, 
+                    "type": t.type, "xai": t.xai
+                })
+            # We put the DB items at the top, followed by the CSV store
+            combined_txns = formatted_txns + transactions_store
+            return {"transactions": combined_txns[:limit]}
+    except Exception as e:
+        log.error(f"DB Fetch Error: {e}")
+
+    # Fallback to local memory if DB is offline
+    return {"transactions": transactions_store[:limit]}
 
 @app.get("/api/users")
-def get_users():
-    return {"users":_users,"total":len(_users),"flagged":sum(1 for u in _users if u["flagged"])}
+async def get_users():
+    return {"users": users_store}
 
 @app.get("/api/graph")
-def get_graph():
-    return _graph
-
-@app.get("/api/metrics")
-def get_metrics():
-    return {"accuracy":97.8,"fpr":2.16,"latency":15,"model_version":"v2.4.1",
-            "total_processed_today":random.randint(12000,15000),
-            "alerts_today":random.randint(24,35),"adaptability":"AUTO-RETRAIN","fed_avg_version":"FedAvg v2.1","active_nodes":2}
+async def get_graph():
+    """
+    🚨 DYNAMIC GRAPH: Connects exact Account IDs to Merchant IDs from the live feed.
+    """
+    nodes = []
+    edges = []
+    added_nodes = set()
+    
+    # Grab top 30 transactions (including simulations!) to build network
+    for tx in transactions_store[:30]:
+        acc = str(tx.get('account', 'Unknown'))
+        merch = str(tx.get('merchant', 'Unknown'))
+        is_bad = tx.get('flagged', False)
+        risk = tx.get('risk', 10)
+        
+        # Add User Node
+        if acc not in added_nodes:
+            nodes.append({"id": acc, "type": "user", "label": acc[:8], "risk": risk, "flagged": is_bad})
+            added_nodes.add(acc)
+            
+        # Add Merchant Node
+        if merch not in added_nodes:
+            nodes.append({"id": merch, "type": "merchant", "label": merch[:10], "risk": risk, "flagged": is_bad})
+            added_nodes.add(merch)
+            
+        # Add Edge Connection
+        edges.append({"source": acc, "target": merch, "suspicious": is_bad})
+        
+    return {"nodes": nodes, "edges": edges}
 
 @app.get("/api/alerts")
-def get_alerts():
-    global _alert_idx
-    _alert_idx += 1
-    item = ALERT_POOL[_alert_idx % len(ALERT_POOL)]
-    return {"alert":{**item,"id":f"ALT-{_alert_idx}","time":datetime.now().strftime("%H:%M:%S")}}
+async def get_alerts():
+    if not alerts_store: return {"alert": {"id": "ALT-INIT", "message": "OmniGuard XAI monitoring active", "severity": "low", "module": "system", "time": datetime.utcnow().strftime("%H:%M:%S")}}
+    return {"alert": alerts_store[0]}
 
 @app.get("/api/audit")
-def get_audit():
-    return {"actions":_audit,"total":len(_audit),"automated":sum(1 for a in _audit if a["automated"]),"reverted":0}
+async def get_audit(limit: int = 50):
+    return {"actions": audit_log[:limit], "total": len(audit_log), "automated": sum(1 for a in audit_log if a.get("automated")), "reverted": 0}
 
-@app.get("/api/intents")
-def get_intents():
-    return {"intents":[i for i in _intents if i["status"]=="pending"]}
-
-@app.post("/api/intent/{intent_id}/approve")
-def approve_intent(intent_id: str):
-    for intent in _intents:
-        if intent["id"]==intent_id:
-            intent["status"]="approved"
-            _audit.insert(0,{"id":f"ACT-{random.randint(9000,9999)}","action":intent["action"][:45]+"…",
-                              "txn_id":intent_id,"method":"Agentic","automated":True,"time_ago":"0s ago","reverted":False})
-    return {"status":"approved"}
-
-@app.post("/api/intent/{intent_id}/reject")
-def reject_intent(intent_id: str):
-    for intent in _intents:
-        if intent["id"]==intent_id: intent["status"]="rejected"
-    return {"status":"rejected"}
+@app.get("/api/metrics")
+async def get_metrics():
+    return {"accuracy": 97.8, "fpr": 2.16, "latency": 15, "adaptability": "AUTO-RETRAIN", "model_version": "v3.0", "total_processed": len(transactions_store)}
 
 @app.get("/api/fed-learning")
-def get_fed_learning():
-    banks = [{"name":b["name"],"abbr":b["abbr"],"sponsor":b["sponsor"],
-              "weights_mb":random.randint(500,900),"syncing":random.random()<0.4,
-              "last_sync":f"{random.randint(1,30)}m ago"} for b in INDIAN_BANKS]
-    return {"banks":banks,"total_weights_mb":3258,"active_sync":2,"version":"FedAvg v2.1"}
+async def get_fed():
+    banks = [{"name":"State Bank of India","abbr":"SBI","sponsor":False},{"name":"HDFC Bank","abbr":"HDFC","sponsor":False},{"name":"ICICI Bank","abbr":"ICICI","sponsor":False},{"name":"Union Bank of India","abbr":"UBI","sponsor":True}]
+    return {"banks": [{**b, "weights_mb": randint(500,900), "syncing": random()<0.4, "last_sync": f"{randint(1,30)}m ago"} for b in banks], "total_weights_mb": 3258, "active_sync": 2, "version": "FedAvg v2.1"}
 
 @app.get("/api/reasoning")
-def get_reasoning():
-    return {"steps":_reasoning}
+async def get_reasoning():
+    return {"steps": [{"time":"LIVE","agent":"Ingestion","message":"Awaiting incoming datastreams..."}]}
+
+@app.get("/api/intents")
+async def get_intents():
+    return {"intents": []}
+
+@app.post("/api/intent/{intent_id}/approve")
+async def approve(intent_id: str): return {"status": "approved"}
+@app.post("/api/intent/{intent_id}/reject")
+async def reject(intent_id: str): return {"status": "rejected"}
+
+class EmployeePayload(BaseModel):
+    employee_id: str
+    name: str
+    department: str
+    action: str
+    data_volume: int
+    login_hour: int
+    is_privilege_escalation: bool
+
+# 🚨 THE NEW EMPLOYEE ENDPOINT (NOW SAVES TO BACKEND MEMORY FOR ALERTS/AUDIT)
+@app.post("/api/simulate-employee")
+async def simulate_employee(payload: EmployeePayload):
+    # Base risk
+    risk_score = 10
+    anomalies = []
+    
+    # Simple Rule/ML simulation for Employee UEBA
+    if payload.data_volume > 200:
+        risk_score += 40
+        anomalies.append("Bulk data export")
+    if payload.login_hour < 6 or payload.login_hour > 22:
+        risk_score += 30
+        anomalies.append("Off-hours login")
+    if payload.is_privilege_escalation:
+        risk_score += 45
+        anomalies.append("Privilege escalation")
+    
+    risk_score = min(risk_score, 98)
+    is_fraud = risk_score >= 60
+    action_taken = "SESSION SUSPENDED" if is_fraud else "ALLOW"
+
+    emp_result = {
+        "id": payload.employee_id,
+        "name": payload.name,
+        "department": payload.department,
+        "role": "Analyst",
+        "last_login": f"{payload.login_hour}:00",
+        "data_volume": payload.data_volume,
+        "risk": risk_score,
+        "flagged": is_fraud,
+        "anomalies": anomalies,
+        "latency": randint(20, 80),
+        "action_taken": action_taken
+    }
+
+    # 🚨 Push the employee result to backend memory so the dashboard polling picks it up!
+    # Update user in store if exists, else add to top
+    existing_idx = next((i for i, u in enumerate(users_store) if u["id"] == payload.employee_id), None)
+    if existing_idx is not None:
+        users_store[existing_idx] = emp_result
+    else:
+        users_store.insert(0, emp_result)
+
+    # Trigger Audit Log and Alert if fraud
+    if is_fraud:
+        audit_log.insert(0, {
+            "id": f"ACT-{uuid.uuid4().hex[:6].upper()}",
+            "action": f"{action_taken} — {payload.employee_id}",
+            "txn_id": payload.employee_id,
+            "risk_score": risk_score,
+            "method": "UEBA Engine",
+            "automated": True,
+            "time_ago": "0s ago",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "reverted": False
+        })
+        alerts_store.insert(0, {
+            "id": payload.employee_id,
+            "message": f"🚨 UEBA ALERT: {', '.join(anomalies)} by {payload.name}",
+            "severity": "high" if risk_score >= 80 else "med",
+            "module": "user",
+            "time": datetime.utcnow().strftime("%H:%M:%S"),
+            "risk_score": risk_score,
+            "xai": []
+        })
+
+    log.info(f"[EMPLOYEE UEBA] {payload.employee_id} | Risk:{risk_score} | {action_taken}")
+    return emp_result
 
 if __name__ == "__main__":
     import uvicorn
