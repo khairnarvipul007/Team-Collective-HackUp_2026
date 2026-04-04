@@ -1,137 +1,128 @@
-# Team-Collective-HackUp_2026
-This is the official repository of the Team Collective for the HackUp 
-# 🛡️ OmniGuard-XAI (fraud detection system)
+TEAM COLLECTIVE
+# 🛡️ OmniGuard XAI Hackup_2026 
+**Real-Time Adaptive Financial Fraud Detection System**
 
-### Behavioral + Temporal Intelligence with Hybrid AI
+![OmniGuard XAI](https://img.shields.io/badge/Status-Hackathon_Ready-success) ![Tech Stack](https://img.shields.io/badge/Stack-React%20%7C%20Python%20%7C%20FastAPI%20%7C%20XGBoost-blue) 
 
----
+OmniGuard XAI is an enterprise-grade, real-time fraud detection engine designed to stop financial crimes *before* the money leaves the server. By fusing Machine Learning (XGBoost + Isolation Forest) with eXplainable AI (SHAP) and dynamic Step-Up MFA, OmniGuard provides unparalleled security without compromising the user experience.
 
-## 📌 Overview
-
-This project is a **smart fraud detection system** designed to identify suspicious transactions by understanding **user behavior and patterns**, rather than relying only on fixed rules.
-
-Unlike traditional systems, it focuses on *how a user normally behaves* and flags transactions that deviate from that pattern.
+Built by **Team Collective**.
 
 ---
 
-## 💡 Core Idea
+## ⚠️ The Problem Statement: The Silent Fraud Crisis
 
-Every user has a unique pattern:
+Modern financial institutions are losing billions to sophisticated, AI-driven cyber threats. Current legacy systems are failing due to four critical vulnerabilities:
 
-* When they make payments
-* How much they usually spend
-* How they interact with their device
-
-This system learns those patterns and detects:
-
-* Unusual transaction amounts
-* Unexpected timing
-* Changes in user behavior
+1. **Reactive Defense:** Legacy systems flag fraud *after* funds are stolen. Banks urgently need pre-transaction prevention.
+2. **Complex Attacks:** Coordinated, multi-channel threats (e.g., Account Takeovers, Synthetic IDs) easily bypass traditional rule-based engines.
+3. **High Latency & Siloed Data:** Fragmented databases prevent the instant fusion of user behavior, device intelligence, and transaction context needed for real-time anomaly detection.
+4. **The "Black Box" AI Problem:** Unexplainable AI alerts leave security teams (SOC) guessing *why* a transaction was flagged, causing critical delays in incident response.
 
 ---
 
-## 🚀 Key Features
+## 💡 Our Solution: OmniGuard XAI
 
-### 🔍 Context-Aware Detection
+OmniGuard shifts the paradigm from post-transaction recovery to **pre-transaction prevention** with millisecond latency. 
 
-* Understands user habits like monthly payments
-* Detects unusual activity based on past behavior
-
-### 👤 Behavioral Biometrics
-
-* Observes typing patterns and interaction behavior
-* Adds an extra layer of identity verification
-
-### 📅 Temporal Intelligence
-
-* Tracks when users usually perform transactions
-* Flags abnormal timings
-
-### 🧠 Hybrid AI Approach
-
-* Combines pattern recognition and anomaly detection
-* Handles both known and unknown fraud cases
-
-### 📊 Explainable Decisions
-
-* Clearly explains why a transaction is flagged
-* Improves transparency and trust
-
-### 🔐 Privacy-Focused Design
-
-* User data remains secure
-* Learning can happen without sharing sensitive information
+### Core Features
+* **🧠 Blended ML Engine:** Combines XGBoost (supervised) and Isolation Forest (unsupervised) for high-accuracy anomaly detection.
+* **🔎 SHAP Explainability (XAI):** Translates complex ML decisions into human-readable insights for SOC analysts instantly.
+* **🛡️ Dynamic Step-Up MFA:** Automatically triggers biometric or OTP verification for "medium-risk" transactions (Score 40-69) to block hackers while keeping real users moving.
+* **👁️ Insider Threat Detection (UEBA):** Monitors internal employee portal logs to detect rogue admins, privilege escalation, and unauthorized data exports.
+* **📱 Dual-Portal Simulation:** Includes a live Customer Mobile App simulator and an Employee Terminal to inject real-time attack vectors.
 
 ---
 
-## ⚙️ How It Works
+## 🏗️ Project Architecture & File Structure
 
-1. A user performs a transaction
-2. The system compares it with past behavior
-3. It checks:
+```text
+omniguard-xai/
+│
+├── backend/                  # Python API & ML Models
+│   ├── main.py               # Main FastAPI/Flask application
+│   ├── requirements.txt      # Python dependencies
+│   ├── models/               # Pre-trained XGBoost & Isolation Forest models
+│   ├── utils/                # Helper functions for data processing & SHAP
+│   └── data/                 # Sample transaction datasets for evaluation
+│
+├── frontend/                 # React UI (SOC Dashboard & Mobile App)
+│   ├── package.json          # Node modules and scripts
+│   ├── vite.config.js        # Vite bundler configuration
+│   ├── index.html            # Main HTML entry point
+│   ├── public/               # Static assets (images, icons)
+│   └── src/
+│       ├── main.jsx          # React DOM render
+│       ├── App.jsx           # Main SOC Analyst Dashboard Component
+│       ├── MobileApp.jsx     # Customer & Employee Simulator (Attack Injector)
+│       ├── components/       # Reusable UI widgets (Charts, Alerts, MFA)
+│       └── styles/           # CSS modules and dark-theme styling
+│
+└── README.md                 # Project documentation
+🚀 Installation & Run Instructions
+Follow these steps to run the OmniGuard XAI environment locally. You will need two terminal windows open: one for the backend and one for the frontend.
 
-   * Is the amount unusual?
-   * Is the timing different?
-   * Is the behavior consistent?
-4. A risk score is generated
-5. Based on the score, the system decides to:
+Prerequisites
+Python 3.9+
 
-   * Allow the transaction
-   * Ask for verification
-   * Block the transaction
+Node.js (v16+) & npm
 
----
+Part 1: Starting the Backend (Machine Learning API)
+Open your first terminal and navigate to the project folder:
+# 1. Navigate to the backend directory
+cd backend
 
-## ⚖️ Decision System
+# 2. Create a virtual environment (Recommended)
+python -m venv venv
 
-The system does not blindly block users. Instead, it uses a **risk-based approach**:
+# 3. Activate the virtual environment
+# On Windows:
+venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
 
-* ✅ Normal activity → Allowed
-* 🔐 Slightly unusual → Verification required
-* ⛔ Highly suspicious → Blocked
+# 4. Install the required Python packages
+pip install -r requirements.txt
 
----
+# 5. Run the backend server (FastAPI/Uvicorn or Flask)
+# If using FastAPI:
+uvicorn main:app --reload --port 8000
+# If using Flask:
+python main.py
+The backend should now be running on http://localhost:8000.
 
-## 📉 Reducing False Alarms
+Part 2: Starting the Frontend (React UI)
+Open your second terminal window:
+# 1. Navigate to the frontend directory
+cd frontend
 
-To ensure a smooth user experience, the system:
+# 2. Install Node dependencies
+npm install
 
-* Learns individual user patterns
-* Allows small variations in behavior
-* Continuously improves using feedback
+# 3. Start the Vite development server
+npm run dev
+The frontend will start on http://localhost:5173.
 
----
+🎮 How to Use the Simulator
+To demonstrate the full power of OmniGuard XAI to the judges, follow this flow:
 
-## 🌟 Why This Project Stands Out
+Open the Dashboards: Open two browser tabs. In Tab 1, open the SOC Dashboard (http://localhost:5173). In Tab 2, open the Mobile Simulator (http://localhost:5173/simulator or navigate via your routing).
 
-* Goes beyond traditional fraud detection
-* Uses **behavior + context**, not just rules
-* Focuses on **accuracy and user experience**
-* Balances **security and convenience**
+Inject a Normal Transaction: On the simulator, select "Normal Nancy". Watch the transaction get instantly approved on the SOC dashboard with a low risk score.
 
----
+Trigger Step-Up MFA: Select "Nightowl Nick" (Off-Hours Activity). The ML model will assign a medium risk score (~55). The simulator will block the payment and instantly prompt a realistic SMS OTP / Biometric MFA screen.
 
-## 🔮 Future Scope
+Execute an Attack: Select "Hacker Harry" (Account Takeover). The system will assign a critical risk score (>75), instantly blocking the transaction.
 
-* Real-time analytics dashboard
-* Fully behavior-based login (no passwords/OTP)
-* Advanced mobile sensor integration
-* Continuous learning for improved accuracy
+View Explainability: On the SOC Dashboard, click on Hacker Harry's blocked transaction. The SHAP Explainability Matrix will reveal exactly why it was blocked (e.g., Velocity, High Distance, New Beneficiary).
 
----
+Insider Threat: Switch to the Employee Terminal and execute an unauthorized data export to see the internal UEBA model suspend the employee session.
 
-## 👨‍💻 Team Collective
+🛠️ Technologies Used
+Frontend: React.js, Vite, Recharts (Data Visualization), CSS3 (Dark Enterprise Theme)
 
-* Team members: Radhe Wankhade
-                Vipul Khairnar
-                Neha Tekwani
-                Sukhada Bhave 
+Backend: Python, FastAPI (or Flask), REST APIs
 
----
+Machine Learning: XGBoost, Scikit-Learn (Isolation Forest), SHAP (SHapley Additive exPlanations), Pandas, NumPy
 
-
-## 💬 Final Note
-
-This project represents a step towards **smarter, more human-aware security systems** that adapt to users instead of restricting them.
-
----
+Built with passion for securing the digital economy.
