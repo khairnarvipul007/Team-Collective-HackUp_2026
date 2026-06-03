@@ -1,12 +1,21 @@
 """
 OmniGuard XAI — Real-Time Scoring API v3.0 (REAL DATA & LIVE GRAPH)
 ===================================================================
-FastAPI server that:
-  1. Loads IsolationForest + XGBoost models on startup.
-  2. Loads REAL synthetic data from the /data folder.
-  3. Serves a live, dynamic Relational Graph based on transactions.
-  4. Ingests simulated attacks into the live transaction feed and graph.
-  5. Publishes fraud alerts to Kafka (optional).
+
+System Architecture: Layered Hybrid AI & Agentic Workflow
+-------------------------------------------------------------------
+1. Data Ingestion Layer: FastAPI endpoints handle high-throughput, real-time transaction payloads.
+2. Model Scoring Layer: Hybrid ensemble utilizing IsolationForest (unsupervised anomaly detection) 
+   and XGBoost (supervised fraud probability scoring).
+3. Storage & Persistence Layer: Dual-write architecture utilizing an in-memory store for 
+   ultra-low latency UI polling, backed by an SQLAlchemy SQLite layer for persistent record keeping.
+4. Event-Driven Layer: Asynchronous Kafka producer for distributed, decoupled fraud alert broadcasting.
+5. Presentation/Graph Layer: Dynamic network generation mapping Account IDs to Merchant IDs for live XAI visualization.
+
+Core Capabilities:
+  - Real-time heuristic and machine-learning based transaction scoring.
+  - XAI (Explainable AI) payload generation detailing exact anomaly contributions.
+  - UEBA (User Entity Behavior Analytics) simulations for internal threat detection.
 """
 
 import os, uuid, json, time, threading, logging
@@ -21,7 +30,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# 🚨 DATABASE IMPORTS (ADDED) 🚨
+# 🚨 DATABASE IMPORTS
 from sqlalchemy.orm import Session
 import models
 from database import engine, get_db
@@ -42,7 +51,7 @@ log = logging.getLogger("omniguard")
 # ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="OmniGuard XAI API",
-    description="Enterprise Financial Fraud Detection — Union Bank of India",
+    description="Enterprise Financial Fraud Detection — Real-Time Scoring Engine",
     version="3.0.0"
 )
 app.add_middleware(
